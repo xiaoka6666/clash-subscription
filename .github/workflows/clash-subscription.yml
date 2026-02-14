@@ -1,0 +1,78 @@
+name: Clash 订阅更新
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+
+env:
+  TZ: Asia/Shanghai
+
+jobs:
+  update-subscription:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python 环境
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyyaml requests base64
+
+      - name: 获取订阅链接
+        id: subscription
+        env:
+          SUBSCRIPTION_URL: ${{ secrets.SUBSCRIPTION_URL }}
+        run: |
+          if [ -z "$SUBSCRIPTION_URL" ]; then
+            echo "错误: 未配置 SUBSCRIPTION_URL 密钥"
+            echo "请在仓库 Settings -> Secrets and variables -> Actions 中添加 SUBSCRIPTION_URL"
+            exit 1
+          fi
+          echo "subscription_url=$SUBSCRIPTION_URL" >> $GITHUB_OUTPUT
+
+      - name: 下载并解析订阅
+        env:
+          SUBSCRIPTION_URL: ${{ secrets.SUBSCRIPTION_URL }}
+        run: |
+          python scripts/parse_subscription.py
+
+      - name: 生成 Clash 配置
+        run: |
+          python scripts/generate_clash_config.py
+
+      - name: 上传配置文件
+        uses: actions/upload-artifact@v4
+        with:
+          name: clash-config
+          path: output/
+          retention-days: 7
+
+      - name: 部署到 GitHub Pages
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./output
+          publish_branch: gh-pages
+          force_orphan: true
+
+      - name: 提交更新
+        if: github.event_name == 'push'
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add output/ 2>/dev/null || true
+          git diff --quiet && git diff --staged --quiet || git commit -m "更新 Clash 配置: $(date '+%Y-%m-%d %H:%M:%S')"
+          git push origin HEAD:${{ github.ref_name }} 2>/dev/null || true
