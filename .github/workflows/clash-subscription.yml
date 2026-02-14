@@ -9,6 +9,11 @@ on:
       - main
       - master
 
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
 env:
   TZ: Asia/Shanghai
 
@@ -30,29 +35,33 @@ jobs:
           python -m pip install --upgrade pip
           pip install pyyaml requests base64
 
-      - name: 获取订阅链接
-        id: subscription
+      - name: 检查订阅链接
+        id: check_subscription
         env:
           SUBSCRIPTION_URL: ${{ secrets.SUBSCRIPTION_URL }}
         run: |
           if [ -z "$SUBSCRIPTION_URL" ]; then
-            echo "错误: 未配置 SUBSCRIPTION_URL 密钥"
+            echo "⚠️ 未配置 SUBSCRIPTION_URL 密钥，跳过订阅更新"
             echo "请在仓库 Settings -> Secrets and variables -> Actions 中添加 SUBSCRIPTION_URL"
-            exit 1
+            echo "has_subscription=false" >> $GITHUB_OUTPUT
+          else
+            echo "has_subscription=true" >> $GITHUB_OUTPUT
           fi
-          echo "subscription_url=$SUBSCRIPTION_URL" >> $GITHUB_OUTPUT
 
       - name: 下载并解析订阅
+        if: steps.check_subscription.outputs.has_subscription == 'true'
         env:
           SUBSCRIPTION_URL: ${{ secrets.SUBSCRIPTION_URL }}
         run: |
           python scripts/parse_subscription.py
 
       - name: 生成 Clash 配置
+        if: steps.check_subscription.outputs.has_subscription == 'true'
         run: |
           python scripts/generate_clash_config.py
 
       - name: 上传配置文件
+        if: steps.check_subscription.outputs.has_subscription == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: clash-config
@@ -60,7 +69,7 @@ jobs:
           retention-days: 7
 
       - name: 部署到 GitHub Pages
-        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        if: steps.check_subscription.outputs.has_subscription == 'true' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
